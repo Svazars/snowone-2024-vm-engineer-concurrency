@@ -1,0 +1,86 @@
+
+\begin{frame}[fragile]{Ленивая инициализация}
+\framesubtitle{Простой случай}
+
+% \begin{lstlisting}[basicstyle=\fontsize{8}{8}\selectfont\ttfamily,
+%     linebackgroundwidth = 17 em
+% ]
+\begin{minted}[fontsize=\small]{java}
+public class LazyInit { 
+
+  private Object heavyToInitialize = null;
+
+  /**
+    * Initializes resource lazily, on first `getResource`. 
+    * `init` should be invoked only once.
+  */
+  Object getResource() {
+    if (heavyToInitialize == null) {
+      heavyToInitialize = init();
+    }
+    return heavyToInitialize;
+  }
+}
+\end{minted}
+%\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Ленивая инициализация}
+\framesubtitle{Многопоточность}
+
+\begin{lstlisting}[basicstyle=\fontsize{8}{8}\selectfont\ttfamily,
+    linebackgroundwidth = 17 em
+]
+    private Object heavyToInitialize;
+\end{lstlisting}
+
+
+\begin{tabular}{p{3.5cm}p{5cm}}
+
+\begin{lstlisting}[basicstyle=\fontsize{8}{8}\selectfont\ttfamily,
+    linebackgroundwidth = 20 em,
+    linebackgroundcolor={%
+      \btLstHL<2-3>{2}
+      \btLstHL<4-5>{3}
+      \btLstHL<6-7>{4}  
+      \btLstHL<8>{5}  
+      \btLstHL<9->{7}  
+}]
+    // thread 1
+    Object getResource() {
+      if (heavyToInitialize == null) {
+
+        heavyToInitialize = init();
+      }
+      return heavyToInitialize;
+    }
+\end{lstlisting}
+          &
+% \onslide<9->{поток №1 получил один экземпляр}
+          \\
+
+
+% \onslide<11->{поток №2 получил другой экземпляр}
+          & 
+\begin{lstlisting}[basicstyle=\fontsize{8}{8}\selectfont\ttfamily,
+    linebackgroundwidth = 22 em,
+    linebackgroundcolor={%
+      \btLstHLG<3-4>{2}
+      \btLstHLG<5-6>{3}
+      \btLstHLG<7-9>{4}
+      \btLstHLG<10>{5}
+      \btLstHLG<11->{7}
+}]
+    // thread 2
+    Object getResource() {
+      if (heavyToInitialize == null) {
+  
+        heavyToInitialize = init();
+      }
+      return heavyToInitialize;
+    }
+\end{lstlisting} 
+\end{tabular}
+
+\end{frame}
+

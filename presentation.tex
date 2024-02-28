@@ -1,0 +1,346 @@
+\documentclass{beamer}
+
+\documentclass[aspectratio=169]{beamer}
+
+% activate me to make slides with no animation
+%\documentclass[handout]{beamer}
+
+\usepackage[warn]{mathtext}
+\usepackage[T2A]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english,russian]{babel}
+
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{verbatim}
+\usepackage{comment} 
+\usepackage{pstricks}
+
+
+\usepackage[cache=false]{minted}
+\usepackage{listings}
+
+\lstset{language=Java,
+                basicstyle=\footnotesize\ttfamily,
+                keywordstyle=\footnotesize\color{blue}\ttfamily,
+}
+
+\usepackage{adjustbox}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  fix-lstlinebgrd.tex 
+\makeatletter
+\let\old@lstKV@SwitchCases\lstKV@SwitchCases
+\def\lstKV@SwitchCases#1#2#3{}
+\makeatother
+\usepackage{lstlinebgrd}
+\makeatletter
+\let\lstKV@SwitchCases\old@lstKV@SwitchCases
+        
+\lst@Key{numbers}{none}{%
+    \def\lst@PlaceNumber{\lst@linebgrd}%
+    \lstKV@SwitchCases{#1}%
+    {none:\\%
+     left:\def\lst@PlaceNumber{\llap{\normalfont
+                \lst@numberstyle{\thelstnumber}\kern\lst@numbersep}\lst@linebgrd}\\%
+     right:\def\lst@PlaceNumber{\rlap{\normalfont
+                \kern\linewidth \kern\lst@numbersep
+                \lst@numberstyle{\thelstnumber}}\lst@linebgrd}%
+    }{\PackageError{Listings}{Numbers #1 unknown}\@ehc}}
+\makeatother
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%  bListHL
+\makeatletter
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% \btIfInRange{number}{range list}{TRUE}{FALSE}
+%
+% Test in int number <number> is element of a (comma separated) list of ranges
+% (such as: {1,3-5,7,10-12,14}) and processes <TRUE> or <FALSE> respectively
+
+\newcount\bt@rangea
+\newcount\bt@rangeb
+
+\newcommand\btIfInRange[2]{%
+    \global\let\bt@inrange\@secondoftwo%
+    \edef\bt@rangelist{#2}%
+    \foreach \range in \bt@rangelist {%
+        \afterassignment\bt@getrangeb%
+        \bt@rangea=0\range\relax%
+        \pgfmathtruncatemacro\result{ ( #1 >= \bt@rangea) && (#1 <= \bt@rangeb) }%
+        \ifnum\result=1\relax%
+            \breakforeach%
+            \global\let\bt@inrange\@firstoftwo%
+        \fi%
+    }%
+    \bt@inrange%
+}
+\newcommand\bt@getrangeb{%
+    \@ifnextchar\relax%
+        {\bt@rangeb=\bt@rangea}%
+        {\@getrangeb}%
+}
+\def\@getrangeb-#1\relax{%
+    \ifx\relax#1\relax%
+        \bt@rangeb=100000%   \maxdimen is too large for pgfmath
+    \else%
+        \bt@rangeb=#1\relax%
+    \fi%
+}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% \btLstHL<overlay spec>{range list}
+%
+% TODO BUG: \btLstHL commands can not yet be accumulated if more than one overlay spec match.
+%
+\newcommand<>{\btLstHL}[1]{%
+\only#2{\btIfInRange{\value{lstnumber}}{#1}{\color{yellow}\def\lst@linebgrdcmd{\color@block}}{\def\lst@linebgrdcmd####1####2####3{}}}%
+}%
+
+\newcommand<>{\btLstHLG}[1]{%
+\only#2{\btIfInRange{\value{lstnumber}}{#1}{\color{green}\def\lst@linebgrdcmd{\color@block}}{\def\lst@linebgrdcmd####1####2####3{}}}%
+}%
+\makeatother
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\showTOC}{
+    \begin{frame}[noframenumbering,plain]
+        \frametitle{Вы находитесь здесь}
+        \tableofcontents[currentsection]
+    \end{frame}
+}
+
+
+
+\title[Concurrency: VM engineer point of view]{!concurrent,worldHello\\ или \\ многопоточность глазами VM-инженера}
+\author[Александр Филатов]{Александр Филатов\\ filatovaur@gmail.com\\ TODO: repo}
+
+\date{}
+
+\usetheme{CambridgeUS}
+
+% tikz
+\usepackage{pgf}
+\usepackage{tikz}
+\usepackage{tikz-qtree}
+\usetikzlibrary{arrows, automata, fit, shapes, shapes.multipart, trees, positioning}
+
+\usepackage{array}
+\usepackage{cancel}
+\usepackage{hyperref}
+\usepackage[normalem]{ulem}
+
+\begin{document}
+
+
+% tikz common
+\newcommand{\uedge}[2]{(#1) edge node {} (#2)}
+\newcommand{\cedge}[3]{(#1) edge[#3, line width=1mm] node {} (#2)}
+\newcommand{\cedgel}[3]{(#1) edge[#3, line width=0.5mm] node {} (#2)}
+\newcommand{\nodesize}{1cm}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\section{Знакомство}
+
+\begin{frame}{Bio: Александр Филатов}
+
+Уже 8 лет как VM-инженер\footnote{\tiny Иван Углянский, Один день из жизни JVM-инженера, \url{https://habr.com/ru/company/jugru/blog/719614/}}
+
+\begin{itemize}
+    \item 2015 - 2019, Excelsior JVM with AOT compilation\footnote{\tiny\url{https://habr.com/ru/company/jugru/blog/437180/}}
+    \item 2019 - now, Huawei, Languages and Compilers lab\footnote{\tiny\url{http://rnew.tilda.ws/excelsiorathuawei}}
+\end{itemize}
+
+\pause
+
+Специализация -- рантаймы виртуальных машин
+
+Узкая специализация -- сборщики мусора
+
+\end{frame}
+
+\begin{frame}{Bio: Александр Филатов}
+
+Область интересов: 
+
+\begin{itemize}
+ \item автоматическое управление памятью
+
+ \pause
+ \item многопоточность
+
+ \pause
+ \item слабые модели памяти
+
+ \pause
+ \item корректность многопоточных структур данных
+\end{itemize}
+
+
+\pause
+Персональное когнитивное искажение: много страдал, отлаживая баги 
+\begin{itemize}
+ \item своего параллельного кода
+
+ \pause
+ \item чужих реализаций многопоточных структур данных
+
+ \pause
+ \item компилятора
+\end{itemize}
+
+\pause
+Опасаюсь нового. Не люблю поддерживать старое.
+
+\end{frame}
+
+\begin{frame}[t,fragile]{Как было получено название доклада}
+\framesubtitle{!concurrent,worldHello}
+
+\begin{minted}[fontsize=\small]{java}
+ for (String msg : new String[] {
+       "Hello", ",", "concurrent", "world", "!"
+    }) {
+    new Thread() {
+        public void run() {
+            System.out.println(msg);
+        }
+    }.start();
+ }
+ \end{minted}
+
+\pause
+
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=3cm,yshift=-2.0cm] at (current page.center) {\includegraphics[width=.6\textwidth]{production/scaried-guys.png}};
+\end{tikzpicture}
+
+
+\end{frame}
+
+
+\begin{frame}{План выступления}
+\tableofcontents
+\end{frame}
+
+\input{parts/part0.tex} 
+\input{parts/part1.tex} 
+\input{parts/part2.tex} 
+\input{parts/part3.tex} 
+
+
+\section{Подведение итогов}
+\showTOC
+
+
+\begin{frame}[fragile,t]{Где же научиться писать правильные многопоточные программы?}
+
+\pause
+Простых способов я не знаю.
+
+\pause
+\begin{itemize}
+    \item Java Concurrency in Practice -- 403 страницы
+    \item The Art of Multiprocessor Programming -- 508 страниц
+    \item Is Parallel Programming Hard, And, If So, What Can You Do About It? -- 634 страницы
+\end{itemize}
+
+\pause
+
+Russ Cox, Go programming language tech lead at Google, author of Go memory model:\footnote<4->{\tiny\url{https://research.swtch.com/plmm}}
+\begin{quote}
+Twenty-five years after the first Java memory model, and after many person-centuries of research effort, we may be starting to be able to formalize entire memory models. Perhaps, one day, we will also fully understand them. 
+\end{quote}
+
+\end{frame}
+
+
+\begin{frame}{Заключение}
+
+Я рассказал вам о своих страхах, привычках и предубеждениях о многопоточном программировании.
+
+\pause
+Гораздо больше осталось за кадром:
+\begin{itemize}
+    \item Сколько интересного скрыто в планировщике задач ОС и его альтернативах
+    \pause
+    \item Об огромных богатствах слабых моделей памяти
+    \pause
+    \item Про фундаментальные алгоритмы и нерешенные проблемы в многопоточности 
+\end{itemize}
+
+\pause
+Если вам стало интересно -- ищите правильных людей. Ходите в университет и на конференции, читайте сложные книги, перенимайте опыт у практикующих разработчиков.
+
+\pause
+Помните, с вами говорил не нормальный человек, а VM-инженер.
+\end{frame}
+
+
+\begin{frame}[fragile]{Где можно найти приключения}
+
+\begin{itemize}
+
+    \item Для студентов: стажировка у системных программистов. 
+    \url{http://rnew.tilda.ws/excelsiorathuawei}
+
+    \begin{center}
+    \includegraphics[width=.25\textwidth]{production/tilda-huawei.png}
+    \end{center}
+
+    \item Для абитуриентов: профиль "Системное программирование"\ ММФ НГУ. \url{https://education.nsu.ru/syspro/}
+
+    \begin{center}
+    \includegraphics[width=.5\textwidth]{production/syspro.png}
+    \end{center}
+
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}[c]{}
+\centering
+Спасибо за внимание!
+
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=-3cm,yshift=-7.0cm] at (current page.center) {\includegraphics[width=.5\textwidth]{production/leela-cool.png}};
+\end{tikzpicture}
+
+\end{frame}
+
+\begin{frame}[noframenumbering]{Почитать}
+Книги
+\begin{itemize}
+    \item "The Art of Multiprocessor Programming"\ by M. Herlihy \& N. Shavit
+    \item "Is Parallel Programming Hard, And, If So, What Can You Do About It?"\ by Paul E. McKenney
+    \item "Java Concurrency in Practice"\ by Brian Goetz et al.
+\end{itemize}
+
+Статьи
+\begin{itemize}
+    \item "Memory Models"\ series by Russ Cox\footnote{\tiny\url{https://research.swtch.com/mm}}
+    \item "Threads Cannot be Implemented as a Library"\ by Hans-J. Boehm
+    \item "A Tutorial Introduction to the ARM and POWER Relaxed Memory Models"\ by L. Maranget et al.
+    \item "Memory Barriers: a Hardware View for Software Hackers"\ by Paul E. McKenney
+\end{itemize}
+\end{frame}
+
+\begin{frame}[noframenumbering]{Посмотреть}
+\begin{itemize}
+    \item Роман Елизаров, "Многопоточное программирование — теория и практика"\ \url{https://youtu.be/mf4lC6TpclM}
+    \item Алексей Шипилев, JMM series \url{https://shipilev.net}
+    \item Herb Sutter, C++ and Beyond 2012, "Atomic Weapons"\ series \url{https://youtu.be/A8eCGOqgvH4}
+\end{itemize}
+\end{frame}
+
+\end{document}

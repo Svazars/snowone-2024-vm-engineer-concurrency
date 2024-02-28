@@ -1,0 +1,395 @@
+
+
+\section{Как я вижу системных программистов}
+\showTOC
+
+
+\input{parts/lazy-init-animation.tex}
+
+
+\begin{frame}[fragile]{Многопоточная ленивая инициализация}
+\framesubtitle{Double checked locking}
+
+\begin{minted}[fontsize=\small]{java}
+private volatile Object heavyToInitialize = null;
+Object getResource() {
+  if (heavyToInitialize == null) {
+    synchronized(this) {
+      if (heavyToInitialize == null) {
+        heavyToInitialize = init();
+      }
+    }
+  }
+  return heavyToInitialize;
+}
+\end{minted}
+
+\pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=-5.0cm,yshift=-4.0cm] at (current page.center) {\includegraphics[width=.3\textwidth]{production/fry-pain-head.png}};
+\end{tikzpicture}
+
+\pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=4.0cm,yshift=-3.5cm] at (current page.center) {\includegraphics[width=.5\textwidth]{production/what-about-perf-2.png}};
+\end{tikzpicture}
+
+\end{frame}
+
+
+\begin{frame}{Многопоточная ленивая инициализация}
+\framesubtitle{А почему так медленно?}
+
+\begin{itemize}
+
+\item Приходит системный программист.
+
+\pause
+
+\item Смотрит на реализацию стандартного шаблона программирования.
+
+\pause
+
+\item Считает, что можно лучше.
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}[fragile]{Многопоточная ленивая инициализация}
+\framesubtitle{Trampolines: idea}
+
+\begin{minted}[fontsize=\small]{c}
+void* getResource() {
+  if (heavyToInitialize == NULL) {
+    heavyToInitialize = create();
+  }
+  return heavyToInitialize;
+}
+\end{minted}
+
+\pause
+
+\begin{minted}[fontsize=\small]{gas}
+getResource: mov     rax, qword ptr [heavyToInitialize]
+             test    rax, rax
+             je      .LBB0_1
+             ret
+.LBB0_1:     ...
+             call    create
+             mov     qword ptr [heavyToInitialize], rax
+             ...
+\end{minted}
+
+\pause
+
+Когда инициализация завершилась, не нужно проверять rax на NULL.
+
+\end{frame}
+
+
+\begin{frame}[fragile]{Многопоточная ленивая инициализация}
+\framesubtitle{Trampolines}
+
+До инициализации:
+\begin{minted}[fontsize=\small]{gas}
+getResource: mov     rax, qword ptr [heavyToInitialize]
+             test    rax, rax
+             je      .LBB0_1
+             ret
+.LBB0_1:     ...
+             call    create
+             mov     qword ptr [heavyToInitialize], rax
+             ...
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[fragile,noframenumbering]{Многопоточная ленивая инициализация}
+\framesubtitle{Trampolines}
+
+Когда проинициализировали, требуется замена выделенного участка:
+\begin{minted}[fontsize=\small]{gas}
+getResource: mov     rax, qword ptr [heavyToInitialize]
+             test    rax, rax ; <<    
+             je      .LBB0_1  ; <<    
+             ret              ; <<    
+.LBB0_1:     ...
+             call    create
+             mov     qword ptr [heavyToInitialize], rax
+             ...
+\end{minted}
+\end{frame}
+
+\begin{frame}[fragile,noframenumbering]{Многопоточная ленивая инициализация}
+\framesubtitle{Trampolines}
+
+После инициализации:
+\begin{minted}[fontsize=\small]{gas}
+getResource: mov     rax, qword ptr [heavyToInitialize]
+             ret  ; test    rax, rax
+             nop  ; je      .LBB0_1
+             nop  ; ret
+.LBB0_1:     ...
+             call    create
+             mov     qword ptr [heavyToInitialize], rax
+             ...
+\end{minted}
+\end{frame}
+
+
+\begin{frame}[t]{Многопоточная ленивая инициализация}
+\framesubtitle{Trampolines: use cases}
+
+Очень элегантное и производительное решение. 
+
+\pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=-5.0cm,yshift=-9.0cm] at (current page.center) {\includegraphics[width=.3\textwidth]{production/fry-pain-head.png}};
+\end{tikzpicture}
+
+\end{frame}
+
+
+\begin{frame}[t]{Многопоточная ленивая инициализация}
+\framesubtitle{Trampolines: use cases}
+
+Очень элегантное и производительное решение. 
+
+Используется в ядре\footnote{\tiny\url{https://lwn.net/Articles/484687/}}:
+\begin{itemize}
+    \pause
+    \item boot-time kernel configuration
+    \pause
+    \item run-time profiling/monitoring
+\end{itemize}
+
+\pause
+
+Недостатки:
+\begin{itemize}
+    \pause
+    \item Security
+    \pause
+    \item Portability
+    \pause
+    \item Хакеризм a.k.a. концептуальная сложность
+    \pause
+    \item Data race еще фатальнее
+    \pause
+    \item Вы так не можете!
+\end{itemize}
+
+%The Linux kernel has a history of using self-modifying code. That is, code that changes itself at run time. For example, distributions do not like to ship more than one kernel, so self-modifying code is used to change the kernel at boot to optimize it for its environment. In the old days, distributions would ship a separate kernel for a uniprocessor machine and another for a multiprocessor machine. The same is true for a paravirtual kernel (one that can only run as a guest) and a kernel to run on real hardware. Because the maintenance of supporting multiple kernels is quite high, work has been done to modify the kernel on boot to change it if it finds that it is running on an uniprocessor machine (spin locks and other multiprocessor synchronizations are changed to be nops). If the kernel is loaded as a virtual guest for a paravirtualized environment, it will convert the kernels low-level instructions to use hypercalls. 
+%
+%ftrace
+
+\end{frame}
+
+\begin{frame}{Многопоточная ленивая инициализация}
+\framesubtitle{Just-In-Time constants: idea}
+
+Фундамент ОС малоподвижен:
+\begin{itemize}
+     \item Ядро уже скомпилировано
+     
+     \pause    
+     \item Ему сложно изменять свой код
+\end{itemize}
+
+\pause
+Прикладные программы могут быть хитрее:
+\begin{itemize}
+     
+     \pause
+     \item В первый раз функция интерпретируется
+     
+     \pause
+     \item Во второй -- компилируется
+     
+     \pause
+     \item Just-in-time compilation, JIT
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}[t,fragile]{Многопоточная ленивая инициализация}
+\framesubtitle{Just-In-Time constants: example}
+
+\begin{minted}[fontsize=\small]{java}
+Object resource = new Object();
+Object[] array  = new Object[] { resource };
+Object getResource(int index) {
+  if (array == null) throw new NullPointer();
+  if (index < 0 || index >= array.length) throw new OutOfBounds();
+  return array[index];
+}
+\end{minted}
+
+\pause 
+
+Допустим, виртуальная машина видит, что
+\begin{itemize}
+    \item в поле \texttt{array} больше ничего не присваивают 
+    \item содержимое \texttt{array} не изменяется
+\end{itemize}
+
+\pause 
+
+Тогда можно:
+\begin{itemize}
+    \item переместить массив в память по адресу \texttt{0x7ffdcaa1c908}
+    \item сгенерировать специализированный код
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}[t,fragile,noframenumbering]{Многопоточная ленивая инициализация}
+\framesubtitle{Just-In-Time constants: example}
+
+\begin{minted}[fontsize=\small]{java}
+Object resource = new Object();
+Object[] array  = new Object[] { resource };
+Object getResource(int index) {
+  if (array == null) throw new NullPointer();
+  if (index < 0 || index >= array.length) throw new OutOfBounds();
+  return array[index];
+}
+Object getResource_optimized(int index) {
+  if (address(array) == 0x7ffdcaa1c908) {
+    if (index == 0) {
+      return someResource;
+    }
+  }
+  uncommon_trap();
+}
+\end{minted}
+
+\texttt{uncommon\_trap} -- магический метод, который <<вернет всё, как было>>.
+
+\pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=3.0cm,yshift=-2.0cm] at (current page.center) {\includegraphics[width=.3\textwidth]{production/fry-pain-head.png}};
+\end{tikzpicture}
+
+\end{frame}
+
+% \begin{frame}{Многопоточная ленивая инициализация}
+% \framesubtitle{Dynamic constants: good, bad and ugly}
+% 
+% Динамические константы -- классический пример спекулятивной оптимизации.
+% 
+% \pause
+% 
+% \begin{itemize}
+%     \item При правильном применении позволяет добиться невероятных результатов
+%     \item При беспечном подходе виртуальная машина утонет в deoptimization trap storm % TODO link
+%     \item Неправильная \textit{реализация} может забрать много месяцев отладки. 
+% \end{itemize}
+% 
+% \pause
+% 
+% Просто представьте, что баг проявляется на сервере с 128 ядрами, при исполнении приложения, которое состоит из 200 тысяч классов.
+% 
+% \end{frame}
+
+
+% \begin{frame}{Многопоточная ленивая инициализация: избирательная энергичность}
+% 
+% Если пользователь не способен пронаблюдать разницу, то не важно как оно устроено внутри.
+% Если дешево и просто, то зачем парить мозг себе и окружающим.
+% 
+% GraalVM? 
+% \end{frame}
+
+
+\begin{frame}[t,fragile]{Многопоточная ленивая инициализация}
+\framesubtitle{Выводы}
+
+\begin{itemize}
+    \item Используйте готовые реализации шаблонов программирования
+    
+    \pause
+    \item Много труда вложено, чтобы они работали верно и быстро
+
+    \pause
+    \item Узнавайте, какие трюки умеет ваш язык программирования\footnote<3->{\tiny\url{https://shipilev.net/jvm/anatomy-quarks/}}
+
+\end{itemize}
+
+\pause
+
+\includegraphics[width=.3\textwidth]{production/suspicious-fry.png}
+
+\pause
+Кажется, что системные программисты не соблюдают принцип KISS.
+
+\end{frame}
+
+% 
+% \begin{frame}{Мьютексы и места, где они обитают}
+% 
+% Гарантия монопоольного доступа
+% Пример
+% 
+% Удобно. Эффективно. Просто.
+% Все используют
+% 
+% \end{frame}
+% 
+% 
+% \begin{frame}{Мьютексы: скрытая угроза}
+% 
+% Не композабельны, скрыты за виртуальностью и коллбеками. Не дают модульности. Глобальное свойство.
+% 
+% \end{frame}
+% 
+% 
+% \begin{frame}{Мьютексы: иллюзия обмана}
+% 
+% Говорят, мьютекс "безопасен". 
+% 1) Единственный реентерабельный мьютекс во всей системе
+% Так просто не бывает, они под капотом всяких i/o, thread.join и прочей жести
+% 
+% 2) Листовая позиция. Когда под ним линейный код без ухода в неподконтрольные дебри.
+% Тут всё еще нужна защита от будущих дурачков на рефакторинге
+% 
+% Системщина -- прерывания и сигнал хэндлнры говорят ой.
+% Пример с implicit NPE и аналогичными трбками, как JVM разработчики могут страдать от этого.
+% 
+% DaveDace concurrency horror of the day
+%
+% \end{frame}
+
+% \begin{frame}{Spin locks: что и почему}
+% 
+% Пример, идея, понятно
+% 
+% \end{frame}
+% 
+% \begin{frame}{Spin locks in user space considered harmful}
+% 
+% Тут секрета не будет. Линус прав, вам нельзя этим баловаться.
+% Но правда  жизни что в любом проекте оно будет. Вопрос только как, когда и кого именно оно ударит.
+% Шаманизм с подбором параметров spin-then-park.
+% 
+% \end{frame}
+% 
+% \begin{frame}{Spin locks: we need to go deeper}
+% 
+% Горы наслоений спинов (уровень пользователя, уровень либы, уровень JVM, уровень libc, уровень ядра, уровень железа)
+% 
+% Пользователь: накопать/придумать
+% Java lib: util.concurrent AbstractQueuedSynchronzier.acqure uses spins  // ConcurrentHashMap uses synchronize
+% JVM - спинования в Unsafe.park нет // зато есть в sycnhronized-ах
+% libc - pthread_cond_wait uses spins
+% ядро -- futex-wake uses spinlocks
+% 
+% \end{frame}
+

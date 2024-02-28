@@ -1,0 +1,235 @@
+
+
+\section{Как я вижу языки программирования}
+\showTOC
+
+\begin{frame}[t]{Holy war warning}
+
+\begin{itemize}
+
+\item Все языки хороши и полезны!
+
+\pause
+\item Просто \textit{некоторые} вещи в \textit{некоторых} языках могут мешать при выполнении \textit{некоторых} задач.
+
+\pause
+\item Не относитесь серьезно к моим словам.
+
+\end{itemize}
+
+\end{frame}
+
+
+\begin{frame}[fragile, t]{Swift: race to the crash}
+Swift\footnote{\tiny\url{https://github.com/apple/swift-evolution/blob/main/proposals/0282-atomics.md}}
+
+\only<1> {
+\begin{quote}
+Concurrent write/write or read/write access to the same location in memory generally remains undefined/illegal behavior, unless all such access is done through a special set of primitive atomic operations.
+\end{quote}
+}
+
+\only<2> {
+\begin{quote}
+Concurrent write/write \sout{or read/write} access to the same location \sout{in memory generally} remains \sout{undefined/}illegal behavior, unless \sout{all such access} is done through \sout{a special set of primitive} atomic operations.
+\end{quote}	
+}
+
+\only<3->{
+\begin{quote}
+Concurrent write/write access to the same location remains illegal behavior, unless is done through atomic operations.
+\end{quote}
+}
+
+\begin{onlyenv}<4->
+%\begin{lstlisting}
+\begin{minted}[fontsize=\small]{swift}
+import Foundation
+class Bird {}
+var S = Bird()
+let q = DispatchQueue.global(qos: .default)
+q.async { while(true) { S = Bird() } }
+while(true) { S = Bird() }
+\end{minted}
+%\end{lstlisting}
+\end{onlyenv}
+
+\only<5->{
+При запуске происходит ошибка \texttt{double free or corruption}.
+}
+
+\only<6->{
+Почему? Попробуйте догадаться сами\footnote{\tiny\url{https://tonygoold.github.io/arcempire/}} или подсмотрите в решебник\footnote{\tiny\url{https://github.com/apple/swift/blob/main/docs/proposals/Concurrency.rst}}.
+}
+
+\end{frame}
+
+
+\begin{frame}[fragile, t]{Python: VIP mutex}
+
+Наиболее интуитивное определение для операций с памятью -- они все происходят атомарно и их все можно расположить на единой шкале времени\footnote{\tiny\url{https://en.wikipedia.org/wiki/Consistency_model#Strict_consistency}}.
+
+\end{frame}
+
+
+\begin{frame}[fragile, t, noframenumbering]{Python: VIP mutex}
+
+Наиболее интуитивное определение для операций с памятью -- они все происходят атомарно и их все можно расположить на единой шкале времени.
+
+
+\begin{lstlisting}
+
+void thread1() {      |    void thread2() {                                   
+                      |
+      foo()           |          baz()                           
+                      |
+                      |
+      bar()           |          foo()                           
+                      |
+}                     |    }                    
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile, t, noframenumbering]{Python: VIP mutex}
+
+Наиболее интуитивное определение для операций с памятью -- они все происходят атомарно и их все можно расположить на единой шкале времени.
+
+\begin{lstlisting}
+
+void thread1() {      |    void thread2() {                                   
+       lock()         |           lock()
+      foo()           |          baz()                           
+       unlock()       |           unlock()
+       lock()         |           lock()
+      bar()           |          foo()                           
+       unlock()       |           unlock()
+}                     |    }                    
+\end{lstlisting}	
+
+\end{frame}
+
+\begin{frame}[fragile, t, noframenumbering]{Python: VIP mutex}
+
+Наиболее интуитивное определение для операций с памятью -- они все происходят атомарно и их все можно расположить на единой шкале времени.
+Защищать глобальным мьютексом каждую операцию.
+
+\begin{lstlisting}
+static GlobalInterpreterLock GIL = ...;
+void thread1() {      |    void thread2() {                                   
+   GIL.lock()         |       GIL.lock()
+      foo()           |          baz()                           
+   GIL.unlock()       |       GIL.unlock()
+   GIL.lock()         |       GIL.lock()
+      bar()           |          foo()                           
+   GIL.unlock()       |       GIL.unlock()
+}                     |    }                    
+\end{lstlisting}	
+
+\end{frame}
+
+\begin{frame}[fragile, t, noframenumbering]{Python: VIP mutex}
+
+Наиболее интуитивное определение для операций с памятью -- они все происходят атомарно и их все можно расположить на единой шкале времени.
+Защищать глобальным мьютексом каждую операцию.
+ 
+\pause
+\begin{itemize}
+	\item Потоки в языке есть\footnote<2->{\tiny\url{https://docs.python.org/3/library/threading.html}}, а их неэффективность является "особенностью"\ интерпретатора CPython.
+
+	\pause
+	\item PyPy тоже не собирается отказываться от GIL\footnote<3->{\tiny\url{https://doc.pypy.org/en/latest/faq.html#does-pypy-have-a-gil-why}}.
+
+	\pause
+	\item Попытка переделать модель языка \textbf{пока} не увенчалась успехом\footnote<4->{\tiny\url{https://peps.python.org/pep-0583/}}.
+
+	\pause
+	\item Выбрасыванию GIL мешает нежелание замедлять скриптовый язык еще на 10-30\%, ломая интероп с нативными библиотеками\footnote<5->{\tiny\url{https://peps.python.org/pep-0703/}}.
+\end{itemize}
+\end{frame}
+
+\begin{frame}[fragile, t]{JavaScript: say no to threading}
+
+Наиболее интуитивное определение для операций с памятью -- они все происходят атомарно и их все можно расположить на единой шкале времени.
+
+\pause
+Пусть в языке вообще не будет потоков.
+
+\pause
+Единственный поток обрабатывает все события. Событие может породить другие, возможно отложенные, события.
+\pause
+Event loop.
+
+\pause
+
+\begin{itemize}
+	\item Пользователи любят использовать все ядра своих систем.
+	\pause
+	\item Можно запускать дополнительных независимых агентов (web workers) и общаться сообщениями\footnote<6->{\tiny\url{https://www.w3schools.com/html/html5_webworkers.asp}}.
+	\pause
+	\item Можно разделять между агентами массивы байтов\footnote<7->{\tiny\url{https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer}}.
+	\pause
+	\item Можно получить data race и думать, что это значит\footnote<8->{\tiny "Repairing and Mechanising the JavaScript Relaxed Memory Model"\ \url{https://arxiv.org/abs/2005.10554}}.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Java: математично!}
+
+\pause
+Используется тяжелая артиллерия: 
+\begin{itemize}
+	\pause
+	\item An action \textit{a} is described by a tuple $\langle t, k, v, u\rangle$ comprising ...\
+	\pause
+	\item Частичные, линейные порядки; транзитивное замыкание бинарных отношений; happens-before
+	\pause
+	\item Causality requirements, circular hp, out-of-thin-air problem
+	\pause
+	\item Adaptation to h/w models\footnote<6->{\tiny"JSR-133 Cookbook for Compiler Writers"\ \url{https://gee.cs.oswego.edu/dl/jmm/cookbook.html}}
+	\pause
+	\item Каждый data race имеет разрешенные и запрещенные последствия
+\end{itemize}
+
+\pause
+Подход обладает рядом недостатков:
+\begin{itemize}
+	\item Очень сложно, долго и дорого.
+	\item Будут недочеты\footnote<8->{\tiny"Java Memory Model Examples: Good, Bad and Ugly"\ \url{https://groups.inf.ed.ac.uk/request/jmmexamples.pdf}}.
+	\item Мало кто в мире будет в состоянии полностью понять написанное. Еще меньше людей смогут применить на практике.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Use patterns, Luke}
+
+Doug Lea, private communication with Aleksey Shipilev, 2013\footnote{\tiny Citation from \url{https://shipilev.net/blog/2014/jmm-pragmatics}, slide 109}
+
+\begin{quote}
+The best way to build up a small repertoire of constructions that you know the answers for and then never think about the JMM rules again unless you are forced to do so! Literally nobody likes figuring things out from the JMM rules as stated, or can even routinely do so correctly.
+This is one of the many reasons we need to overhaul JMM someday.
+\end{quote}
+\end{frame}
+
+
+\begin{frame}[t]{Многопоточность + Язык программирования = ?}
+
+Существуют языки программирования на любой вкус:
+\begin{itemize}
+	\item Простые и не очень	
+	\pause
+	\item Быстрые и не очень
+	\pause
+	\item Многопоточные и не очень	
+\end{itemize}
+
+\pause
+
+Выбирайте подходящий язык для конкретной задачи. 
+
+\pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=-4cm,yshift=-6.5cm] at (current page.center) {\includegraphics[width=.4\textwidth]{production/kiss/kiss.png}};
+\node[xshift=3cm,yshift=-6.5cm] at (current page.center) {\includegraphics[width=.35\textwidth]{production/kiss/1-prof-kiss.jpg}};
+\end{tikzpicture}
+
+\end{frame}

@@ -1,0 +1,531 @@
+
+
+\section{Как я вижу компиляторы}
+\showTOC
+
+\begin{frame}[t,fragile]{Классические оптимизации однопоточного кода}
+\framesubtitle{Removing reads}
+
+
+\begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+
+\begin{minted}[fontsize=\small]{c}
+static int a;
+void foo_1() {
+  while (true) {
+    int tmp = a;
+    if (tmp == 0) break;
+    do_something_with(tmp);
+  }
+}
+\end{minted}
+
+&
+
+\end{tabular}
+
+\end{frame}
+
+
+\begin{frame}[t,fragile,noframenumbering]{Классические оптимизации однопоточного кода}
+\framesubtitle{Removing reads}
+
+\begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+
+\begin{minted}[fontsize=\small]{c}
+static int a;
+void foo_1() {
+  while (true) {
+    int tmp = a;
+    if (tmp == 0) break;
+    do_something_with(tmp);
+  }
+}
+\end{minted}
+
+&
+
+\begin{minted}[fontsize=\small]{c}
+// "optimized" version
+void foo_2() {
+  int tmp = a;
+  if (tmp != 0)
+    while (true) { 
+      do_something_with(tmp); 
+    }
+}
+\end{minted}
+\end{tabular}
+
+Имеет ли право компилятор уменьшить количество загрузок из памяти и переписать функцию?
+\end{frame}
+
+
+\begin{frame}[t, fragile]{Классические оптимизации однопоточного кода}
+\framesubtitle{Godbolt}
+
+
+\begin{tabular}{p{0.4\textwidth} p{0.5\textwidth}}
+
+
+\begin{minted}[fontsize=\small]{c}
+static int a;
+void foo_1() {
+  while (true) {
+    int tmp = a;
+    if (tmp == 0) break;
+    do_something_with(tmp);
+  }
+}
+\end{minted}
+
+&
+
+\end{tabular}
+\end{frame}
+
+
+\begin{frame}[t, fragile, noframenumbering]{Классические оптимизации однопоточного кода}
+\framesubtitle{Godbolt}
+
+
+\begin{tabular}{p{0.42\textwidth} p{0.5\textwidth}}
+
+
+\begin{minted}[fontsize=\small]{c}
+static int a;
+void foo_1() {
+  while (true) {
+    int tmp = a;
+    if (tmp == 0) break;
+    do_something_with(tmp);
+  }
+}
+\end{minted}
+
+\texttt{x86-64 clang 16.0.0 -O2}\footnote{\tiny\url{https://godbolt.org/z/99j3erzaE}}
+
+\texttt{x86-64 gcc 13.1 -O2}\footnote{\tiny\url{https://godbolt.org/z/fxzGEo1qf}}
+
+&
+
+\begin{minted}[fontsize=\small]{gas}
+foo_1:                                  
+    push    rbx
+    mov     ebx, [a]
+    test    ebx, ebx
+    je      .LBB1_2
+.LBB1_1:                       #<-|    
+    mov     edi, ebx           #  |
+    call    do_something_with  #  |
+    jmp     .LBB1_1            #--|
+.LBB1_2:
+    pop     rbx
+    ret
+\end{minted}
+
+\end{tabular}
+
+\pause
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=4.0cm,yshift=-4.0cm] at (current page.center) {\includegraphics[width=.2\textwidth]{production/bender-ass.png}};
+\end{tikzpicture}
+
+\end{frame}
+
+
+\begin{frame}{Кто виноват и что делать?}
+
+Очевидные преобразования однопоточных программ искажают поведение многопоточного кода.
+
+\pause
+
+Приходится изучать разные решения:
+
+\pause
+\begin{itemize}
+	\item компиляторные барьеры
+	\pause
+  \item memory orderings (volatile, seq-cst, acquire-release...)\footnote<4->{\tiny\url{https://snowone.ru/2024/speakers/alantsov}}
+  \pause
+	\item примитивы синхронизации и их интеграцию с языком программирования % (threads cannot impl as library)
+	\pause
+	\item нативные отладчики и time-travel debugging
+	\pause
+	\item узкоспециализированные инструменты (model checking, deterministic scheduling...)
+\end{itemize}
+
+\end{frame}
+
+
+% \begin{frame}{Выдумывание операций}
+% 
+% 2. Схлопывает вычислений. Добавляет вычисления. Выносит из секций, заносит в секции.
+% Имеет право на совсем странные вещи. OOTA, что-то там еще
+% 
+% \end{frame}
+
+
+\section{Как я вижу процессоры}
+\showTOC
+
+\begin{frame}[t]{Кругом враги}
+
+Не только компиляторы (software) пытаются сломать ваше представление об исполнении программы в многопоточном контексте. 
+
+\pause
+Есть еще процессор и подсистема памяти (hardware). 
+
+\pause
+Которые умеют:
+\begin{itemize}
+    \pause
+    \item Исполнять независимые инструкции одновременно (out-of-order execution)
+
+    \pause
+    \item Задействовать одни и те же ресурсы для исполнения логически независимых потоков (hyper-threading)
+\end{itemize}
+\end{frame}
+
+
+
+\begin{frame}[t,noframenumbering]{Кругом враги}
+
+Не только компиляторы (software) пытаются сломать ваше представление об исполнении программы в многопоточном контексте. 
+
+Есть еще процессор и подсистема памяти (hardware). 
+
+Которые умеют:
+\begin{itemize}
+    \item Исполнять независимые инструкции одновременно (out-of-order execution)
+
+    \item Задействовать одни и те же ресурсы для исполнения логически независимых потоков (hyper-threading)
+
+    \item Спекулировать\footnote{\tiny\url{https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)}}\textsuperscript{,}\footnote{\tiny\url{https://en.wikipedia.org/wiki/Meltdown_(security_vulnerability)}}
+    \begin{itemize}
+        \item О предстоящих переходах (branch prediction)
+        \item О требуемой памяти (cache prefetching)
+        \item О результате вычислений (speculative execution)
+        \item И многом другом
+    \end{itemize}
+\end{itemize}
+
+\end{frame}
+
+
+ \begin{frame}[fragile,t]{x86: Store buffering}
+ 
+ 
+ \begin{minted}[fontsize=\small]{c}
+                           int x, y;
+ \end{minted}
+ 
+ \begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+ 
+ \begin{minted}[fontsize=\small]{c}
+ void threadA() {
+       x = 1;
+   int a = y;
+ }
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{c}
+ void threadB() {                                   
+         y = 1;                           
+     int b = x;                           
+ }                    
+ \end{minted}
+ \end{tabular}
+ 
+ 
+ \pause
+ 
+ \begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+ \begin{minted}[fontsize=\small]{gas}
+ # thread A
+ mov [x] ,  1  # (A.1)
+ mov EAX , [y] # (A.2)
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{gas}
+ # thread B          
+ mov [y] , 1  # (B.1) 
+ mov EBX, [x] # (B.2) 
+ \end{minted}
+ \end{tabular}
+ 
+ \end{frame}
+ 
+ 
+ \begin{frame}[fragile,t,noframenumbering]{x86: Store buffering}
+ 
+ \begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+ \begin{minted}[fontsize=\small]{gas}
+ # thread A
+ mov [x] ,  1  # (A.1)
+ mov EAX , [y] # (A.2)
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{gas}
+ # thread B          
+ mov [y] , 1  # (B.1) 
+ mov EBX, [x] # (B.2) 
+ \end{minted}
+ \end{tabular}
+ 
+ \pause
+ Какие значения для \texttt{(EAX EBX)} допустимы?
+ 
+ \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (1 1)\ , (0 1)\ , (1 0)\ , (0 0)}
+ 
+ \pause
+ Варианты исполнения:
+ \begin{itemize}
+     \item \texttt{A.1 -> A.2 -> B.1 -> B.2}
+     \item \texttt{\ \ \ \ \ \ \       B.1 -> A.2 -> B.2}
+     \item \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \              B.2 -> A.2}
+     \item \texttt{B.1 -> A.1 -> A.2 -> B.2}
+     \item \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \              B.2 -> A.2}
+     \item \texttt{\ \ \ \ \ \ \       B.2 -> A.1 -> A.2}
+ \end{itemize}
+ \end{frame}
+ 
+ \begin{frame}[fragile,t,noframenumbering]{x86: Store buffering}
+ 
+ \begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+ \begin{minted}[fontsize=\small]{gas}
+ # thread A
+ mov [x] ,  1  # (A.1)
+ mov EAX , [y] # (A.2)
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{gas}
+ # thread B          
+ mov [y] , 1  # (B.1) 
+ mov EBX, [x] # (B.2) 
+ \end{minted}
+ \end{tabular}
+ 
+ Какие значения для \texttt{(EAX EBX)} допустимы?
+ 
+ \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ (1 1)\ , (0 1)\ , (1 0)\ , (0 0)}
+ 
+ Варианты исполнения:
+ \begin{itemize}
+     \item \texttt{A.1 -> A.2 -> B.1 -> B.2}                            : \texttt{(0, 1)}
+     \item \texttt{\ \ \ \ \ \ \       B.1 -> A.2 -> B.2}               : \texttt{(1, 1)}
+     \item \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \              B.2 -> A.2} : \texttt{(1, 1)}
+     \item \texttt{B.1 -> A.1 -> A.2 -> B.2}                            : \texttt{(1, 1)}
+     \item \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \              B.2 -> A.2} : \texttt{(1, 1)}
+     \item \texttt{\ \ \ \ \ \ \       B.2 -> A.1 -> A.2}               : \texttt{(1, 0)}
+ \end{itemize}
+ \end{frame}
+ 
+ \begin{frame}[fragile,t,noframenumbering]{x86: Store buffering}
+ 
+ \begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+ \begin{minted}[fontsize=\small]{gas}
+ # thread A
+ mov [x] ,  1  # (A.1)
+ mov EAX , [y] # (A.2)
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{gas}
+ # thread B          
+ mov [y] , 1  # (B.1) 
+ mov EBX, [x] # (B.2) 
+ \end{minted}
+ \end{tabular}
+ 
+ Какие значения для \texttt{(EAX EBX)} допустимы?
+ 
+ \texttt{Ответ:\ \ \ \ \ \ \ \ \ \ \ \ (1 1)\ , (0 1)\ , (1 0)}
+ 
+ Варианты исполнения:
+ \begin{itemize}
+     \item \texttt{A.1 -> A.2 -> B.1 -> B.2}                            : \texttt{(0, 1)}
+     \item \texttt{\ \ \ \ \ \ \       B.1 -> A.2 -> B.2}               : \texttt{(1, 1)}
+     \item \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \              B.2 -> A.2} : \texttt{(1, 1)}
+     \item \texttt{B.1 -> A.1 -> A.2 -> B.2}                            : \texttt{(1, 1)}
+     \item \texttt{\ \ \ \ \ \ \ \ \ \ \ \ \ \              B.2 -> A.2} : \texttt{(1, 1)}
+     \item \texttt{\ \ \ \ \ \ \       B.2 -> A.1 -> A.2}               : \texttt{(1, 0)}
+ \end{itemize}
+ \end{frame}
+ 
+ \begin{frame}[fragile,t,noframenumbering]{x86: Store buffering}
+ 
+ \begin{tabular}{p{0.5\textwidth} p{0.5\textwidth}}
+ \begin{minted}[fontsize=\small]{gas}
+ # thread A
+ mov [x] ,  1  # (A.1)
+ mov EAX , [y] # (A.2)
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{gas}
+ # thread B          
+ mov [y] , 1  # (B.1) 
+ mov EBX, [x] # (B.2) 
+ \end{minted}
+ \end{tabular}
+ 
+ Какие значения для \texttt{(EAX EBX)} допустимы?
+ 
+ \only<1>{\texttt{Ответ:}}\only<2->{{\color{red}\texttt{Правильный ответ:}}} \only<1>{\texttt{\ \ \ \ \ \ \ \ \ \ \ }} \texttt{(1 1)\ , (0 1)\ , (1 0)}
+ \pause
+ {\color{red} \texttt{, (0 0)}}
+ 
+ \pause
+ Процессор иногда переупорядочивает записи и чтения.
+% \pause
+% В данном случае изменился наблюдаемый другими процессорами порядок store и load операций\footnote<4->{\tiny\url{https://habr.com/ru/company/JetBrains-education/blog/523298/}}\textsuperscript{,}\footnote<4->{\tiny\url{https://diy.inria.fr/doc/SB.litmus}}\textsuperscript{,}\footnote<4->{\tiny\url{https://www.cl.cam.ac.uk/~pes20/weakmemory/acm.pdf}}.
+ 
+ \pause
+ Вывод: порядок инструкций в машинном коде $\neq$ порядок наблюдаемых эффектов этих инструкций.
+
+ \pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node[xshift=4.0cm,yshift=-3.5cm] at (current page.center) {\includegraphics[width=.3\textwidth]{production/fry-pain-head.png}};
+\end{tikzpicture}
+
+\end{frame}
+ 
+ 
+ \begin{frame}[fragile]{arm64: Independent Reads of Independent Writes}
+ 
+ 
+ \begin{tabular}{p{0.2\textwidth} p{0.2\textwidth} p{0.2\textwidth} p{0.2\textwidth}}
+ \begin{minted}[fontsize=\small]{python}
+ thread1
+   x = 1
+ \end{minted}
+ 
+ & 
+ 
+ \begin{minted}[fontsize=\small]{python}
+ thread2
+   y = 1
+ \end{minted}
+ 
+ &
+ 
+ \begin{minted}[fontsize=\small]{python}
+ thread3
+  r1 = x
+  r2 = y 
+ \end{minted}
+ 
+ &
+ 
+ \begin{minted}[fontsize=\small]{python}
+ thread4
+  r3 = y
+  r4 = x
+ \end{minted}
+ \end{tabular}
+ 
+ 
+ \pause
+ Может ли быть так, что \texttt{(r1 = 1, r2 = 0, r3 = 1, r4 = 0)}?
+ 
+ %\pause
+ %Могут ли потоки 3 и 4 увидеть изменения в разном порядке?
+ 
+ \pause
+ При условии, что переупорядочивание чтений не происходит.
+ 
+ \pause
+ \begin{itemize}
+ \item На \texttt{x86} или \texttt{x86\_64} (TSO): нет
+ 
+ \pause
+ \item На \texttt{ARM} или \texttt{POWER}: да\footnote<5->{\tiny A Tutorial Introduction to the ARM and POWER Relaxed Memory Models, section 6.1}
+ \end{itemize}
+ 
+ \pause
+ Записи могут "доехать"\ до других процессоров в разном порядке.
+ 
+ \pause
+ У каждого процессора своя временная шкала и некоторое видение окружающего мира. Возможно, отличающееся от других процессоров.
+ 
+ \pause
+ Вывод: нельзя рассматривать "запись в ячейку памяти"\ как точку на единой временной шкале\footnote<8->{\tiny The Art of Multiprocessor Programming by Maurice Herlihy \& Nir havit, Chapter 3 "Concurrent Objects"}.
+
+
+\pause
+
+\begin{tikzpicture}[remember picture,overlay]
+\node at (current page.center) {\includegraphics[width=.6\textwidth]{production/fry-crazy.png}};
+\end{tikzpicture}
+
+ \end{frame}
+
+ 
+ 
+ \begin{frame}[t]{Почему так сложно?}
+ 
+ \begin{itemize}
+  \item порядок инструкций в машинном коде $\neq$ порядок наблюдаемых эффектов этих инструкций 
+  \pause
+  \item нельзя рассматривать "чтение/запись в ячейку памяти"\ как точку на единой временной шкале
+  \pause
+  \item у каждого процессора свои правила
+ \end{itemize}
+ 
+ \pause
+
+ \begin{center}
+ \includegraphics[width=.3\textwidth]{production/bender-kill.jpg}
+ \end{center}
+
+ \end{frame}
+
+
+\begin{frame}[t,noframenumbering]{Почему так сложно?}
+ 
+ \begin{itemize}
+  \item порядок инструкций в машинном коде $\neq$ порядок наблюдаемых эффектов этих инструкций 
+  \item нельзя рассматривать "чтение/запись в ячейку памяти"\ как точку на единой временной шкале
+  \item у каждого процессора свои правила
+ \end{itemize}
+ 
+ Почему вообще хоть кто-то пользуется ARM/POWER/RISC-V и другими процессорами со слабой моделью памяти? 
+ \pause
+ \begin{itemize}
+   \item производительность
+   \pause
+   \item Производительность!
+   \pause
+   \item энергосбережение :)
+ \end{itemize}
+ 
+ \end{frame}
+
+
+% \begin{frame}{Мастера перестановок}
+% 
+% 1. Переставляет, зараза многое и не так. И барьеры неинтуитивные и много их разных, на разных платформах.
+% Литмусы эти.
+% 
+% \end{frame}
+% 
+% 
+% \begin{frame}{Непредсказуемая скорость работы}
+% 
+% 2. ВСе эти непредсказуемые performacne модели памяти. То быстро, то медленно, то false sharing, то префетч отвалился, то вымывание, то minor page fault
+% Кода компилятор сгенерил в 3 раза больше, чем ручной ассемблер и при этом стало быстрее. ой границу цикла ровнять. Или колокацию. Или не надо. А-а-а
+% 
+% \end{frame}
+
