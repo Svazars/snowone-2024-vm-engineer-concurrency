@@ -1,2 +1,3 @@
-# snowone-2024-vm-engineer-concurrency
-Slides for SnowOne 2024
+# Многопоточность глазами VM-инженера
+
+Слайды к выступлению на студенческом дне конференции SnowOne 2024 https://snowone.ru/2024/speakers/afilatov
